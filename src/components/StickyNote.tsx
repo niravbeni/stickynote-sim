@@ -36,6 +36,8 @@ const StickyNote: React.FC<StickyNoteProps> = ({
 
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [isRightCornerHovered, setIsRightCornerHovered] = useState(false);
+  const [isLeftCornerHovered, setIsLeftCornerHovered] = useState(false);
   const dragOffset = useRef<THREE.Vector3>(new THREE.Vector3());
   const currentPosition = useRef<THREE.Vector3>(new THREE.Vector3(...position));
   const { camera, gl } = useThree();
@@ -104,7 +106,9 @@ const StickyNote: React.FC<StickyNoteProps> = ({
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    if (isDragging || isGlobalDragging) return;
+    if (isDragging || isGlobalDragging || isRightCornerHovered || isLeftCornerHovered) return;
+    
+    document.body.style.cursor = 'grabbing';
     
     // Get the current world position of the sticky note
     const worldPosition = new THREE.Vector3();
@@ -160,6 +164,7 @@ const StickyNote: React.FC<StickyNoteProps> = ({
     if (!isDragging) return;
     e.stopPropagation?.();
     
+    document.body.style.cursor = 'grab';
     setIsDragging(false);
     onDragEnd?.();
 
@@ -179,14 +184,31 @@ const StickyNote: React.FC<StickyNoteProps> = ({
     onHoverEnd?.();
   };
 
+  const handleRightCornerPointerEnter = (e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation();
+    setIsRightCornerHovered(true);
+  };
+
+  const handleRightCornerPointerLeave = (e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation();
+    setIsRightCornerHovered(false);
+  };
+
+  const handleLeftCornerPointerEnter = (e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation();
+    setIsLeftCornerHovered(true);
+  };
+
+  const handleLeftCornerPointerLeave = (e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation();
+    setIsLeftCornerHovered(false);
+  };
+
   return (
     <mesh
       ref={ref}
       castShadow
       receiveShadow
-      onPointerDown={handlePointerDown}
-      onPointerEnter={handlePointerEnter}
-      onPointerLeave={handlePointerLeave}
     >
       <boxGeometry args={[1, 1, 0.1]} />
       <meshStandardMaterial
@@ -196,6 +218,119 @@ const StickyNote: React.FC<StickyNoteProps> = ({
         emissive={isHovered || isDragging ? color : '#000000'}
         emissiveIntensity={isHovered || isDragging ? 0.2 : 0}
       />
+
+      {/* Left corner hover detection area */}
+      <mesh 
+        position={[0.35, 0.35, 0]}
+        onPointerEnter={(e) => {
+          e.stopPropagation();
+          handleLeftCornerPointerEnter(e);
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerLeave={(e) => {
+          e.stopPropagation();
+          handleLeftCornerPointerLeave(e);
+          if (!isDragging) {
+            document.body.style.cursor = isHovered ? 'grab' : 'auto';
+          } else {
+            document.body.style.cursor = 'grabbing';
+          }
+        }}
+      >
+        <boxGeometry args={[0.4, 0.4, 0.15]} />
+        <meshBasicMaterial visible={false} transparent opacity={0} />
+      </mesh>
+
+      {/* Right corner hover detection area */}
+      <mesh 
+        position={[0.35, -0.35, 0]}
+        onPointerEnter={(e) => {
+          e.stopPropagation();
+          handleRightCornerPointerEnter(e);
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerLeave={(e) => {
+          e.stopPropagation();
+          handleRightCornerPointerLeave(e);
+          if (!isDragging) {
+            document.body.style.cursor = isHovered ? 'grab' : 'auto';
+          } else {
+            document.body.style.cursor = 'grabbing';
+          }
+        }}
+      >
+        <boxGeometry args={[0.4, 0.4, 0.15]} />
+        <meshBasicMaterial visible={false} transparent opacity={0} />
+      </mesh>
+
+      {/* Full note hover detection area */}
+      <mesh
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          if (!isRightCornerHovered && !isLeftCornerHovered && !isDragging) {
+            document.body.style.cursor = 'grab';
+          }
+        }}
+        onPointerOut={(e) => {
+          e.stopPropagation();
+          if (!isRightCornerHovered && !isLeftCornerHovered && !isDragging) {
+            document.body.style.cursor = 'auto';
+          }
+        }}
+      >
+        <boxGeometry args={[1, 1, 0.11]} />
+        <meshBasicMaterial visible={false} transparent opacity={0} />
+      </mesh>
+
+      {/* Right folded corner triangle */}
+      {isRightCornerHovered && (
+        <mesh position={[0.35, -0.35, -0.051]}>
+          <extrudeGeometry
+            args={[
+              new THREE.Shape([
+                new THREE.Vector2(0, 0),
+                new THREE.Vector2(0.15, 0),
+                new THREE.Vector2(0, -0.15),
+              ]),
+              {
+                depth: -0.015,
+                bevelEnabled: false
+              }
+            ]}
+          />
+          <meshBasicMaterial
+            color={color}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
+
+      {/* Top-right folded corner triangle */}
+      {isLeftCornerHovered && (
+        <mesh position={[0.35, 0.35, -0.051]}>
+          <extrudeGeometry
+            args={[
+              new THREE.Shape([
+                new THREE.Vector2(0, 0),
+                new THREE.Vector2(0.15, 0),
+                new THREE.Vector2(0, 0.15),
+              ]),
+              {
+                depth: -0.015,
+                bevelEnabled: false
+              }
+            ]}
+          />
+          <meshBasicMaterial
+            color={color}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
     </mesh>
   );
 };
