@@ -9,12 +9,23 @@ import CameraController from './CameraController';
 const COLORS = ['#ffd700', '#ffa500', '#ff69b4', '#98fb98', '#87ceeb'];
 const PAD_THICKNESS = 0.1; // Thickness of the pad
 const NOTE_THICKNESS = 0.002; // Thickness of single notes
+const PAD_COLLISION_GROUP = 1;
+const DROPPED_NOTE_COLLISION_GROUP = 2;
+const GROUND_COLLISION_GROUP = 4;
 
 function Ground() {
   const [ref] = usePlane<THREE.Mesh>(() => ({
     rotation: [-Math.PI / 2, 0, 0],
     position: [0, -2, 0],
-    material: { friction: 0.3 }
+    material: { 
+      friction: 0.5,
+      restitution: 0.1,
+      contactEquationStiffness: 1e6,
+      contactEquationRelaxation: 4,
+    },
+    type: 'Static',
+    collisionFilterGroup: GROUND_COLLISION_GROUP,
+    collisionFilterMask: PAD_COLLISION_GROUP | DROPPED_NOTE_COLLISION_GROUP,
   }));
 
   return (
@@ -40,6 +51,41 @@ const CursorNote: React.FC<CursorNoteProps> = ({ cursorNote, mousePos, onMouseMo
   const { camera } = useThree();
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const planeRef = useRef<THREE.Plane>(new THREE.Plane(new THREE.Vector3(0, 1, 0))); // Horizontal plane
+  const lastMouseEvent = useRef<MouseEvent | null>(null);
+  const animationFrameId = useRef<number | null>(null);
+
+  // Optimized mouse handler with requestAnimationFrame
+  const handleMouseMoveOptimized = () => {
+    if (!cursorNote || !lastMouseEvent.current) return;
+
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+
+    // Keep enforcing the cursor style during movement
+    document.body.style.cursor = 'all-scroll';
+
+    const event = lastMouseEvent.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // Set up raycaster from camera
+    raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), camera);
+
+    // Get the height of the source note
+    const sourceHeight = cursorNote.sourcePosition[1];
+
+    // Create a plane at the same height as the source note
+    planeRef.current.constant = -sourceHeight;
+
+    const intersectionPoint = new THREE.Vector3();
+    if (raycasterRef.current.ray.intersectPlane(planeRef.current, intersectionPoint)) {
+      onMouseMove([intersectionPoint.x, sourceHeight, intersectionPoint.z]);
+    }
+
+    // Continue the animation loop
+    animationFrameId.current = requestAnimationFrame(handleMouseMoveOptimized);
+  };
 
   useEffect(() => {
     if (!cursorNote) return;
@@ -48,34 +94,26 @@ const CursorNote: React.FC<CursorNoteProps> = ({ cursorNote, mousePos, onMouseMo
     document.body.style.cursor = 'all-scroll';
 
     const handleMouseMove = (event: MouseEvent) => {
-      const canvas = document.querySelector('canvas');
-      if (!canvas) return;
-
-      // Keep enforcing the cursor style during movement
-      document.body.style.cursor = 'all-scroll';
-
-      const rect = canvas.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      // Set up raycaster from camera
-      raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), camera);
-
-      // Get the height of the source note
-      const sourceHeight = cursorNote.sourcePosition[1];
-
-      // Create a plane at the same height as the source note
-      planeRef.current.constant = -sourceHeight;
-
-      const intersectionPoint = new THREE.Vector3();
-      if (raycasterRef.current.ray.intersectPlane(planeRef.current, intersectionPoint)) {
-        onMouseMove([intersectionPoint.x, sourceHeight, intersectionPoint.z]);
+      // Store the last mouse event
+      lastMouseEvent.current = event;
+      
+      // Start animation frame if not already running
+      if (!animationFrameId.current) {
+        animationFrameId.current = requestAnimationFrame(handleMouseMoveOptimized);
       }
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
+    
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
+      
+      // Cancel any pending animation frame
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
+        animationFrameId.current = null;
+      }
+      
       // Reset cursor only if we're not still in cursor note mode
       if (!cursorNote) {
         document.body.style.cursor = 'auto';
@@ -157,7 +195,7 @@ const Scene: React.FC = () => {
     }
   };
 
-  // Handle clicking anywhere to drop the note
+  // Handle clicking anywhere to drop the note - with improved responsiveness
   const handleCanvasClick = (event: THREE.Event) => {
     // Prevent immediate drop when creating the note
     if (justCreatedRef.current) {
@@ -165,25 +203,27 @@ const Scene: React.FC = () => {
     }
 
     if (cursorNote) {
-      // Create a new physical note slightly above the current position
+      // Create a new physical note at the exact mouse position
       const dropPosition: [number, number, number] = [
         mousePos[0],
-        mousePos[1], // No additional height for immediate drop
+        mousePos[1], 
         mousePos[2]
       ];
 
-      // Add the new note to the notes array with horizontal rotation
+      // Add the new note to the notes array with immediate effect
       setNotes(prevNotes => [...prevNotes, {
         id: cursorNote.id,
         position: dropPosition,
         color: cursorNote.color,
         isDropped: true,
         rotation: [-Math.PI / 2, 0, 0],
-        thickness: NOTE_THICKNESS // Add thickness to match cursor note
+        thickness: NOTE_THICKNESS
       }]);
 
-      // Remove the cursor note
+      // Remove the cursor note immediately
       setCursorNote(null);
+      // Reset cursor
+      document.body.style.cursor = 'auto';
     }
   };
 
@@ -243,12 +283,18 @@ const Scene: React.FC = () => {
         <Physics 
           gravity={[0, -9.81, 0]}
           defaultContactMaterial={{
-            friction: 0.3,
-            restitution: 0.2,
+            friction: 0.5,
+            restitution: 0.1,
             contactEquationStiffness: 1e6,
-            contactEquationRelaxation: 3,
+            contactEquationRelaxation: 4,
+            frictionEquationStiffness: 1e6,
+            frictionEquationRelaxation: 4,
           }}
-          iterations={20}
+          iterations={10}
+          allowSleep={true}
+          broadphase="SAP"
+          tolerance={0.001}
+          maxSubSteps={4}
         >
           <Ground />
           {notes.map((note) => (
