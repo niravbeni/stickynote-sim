@@ -10,7 +10,12 @@ interface StickyNoteProps {
   onDragEnd?: () => void;
   onHoverStart?: () => void;
   onHoverEnd?: () => void;
+  onCornerClick?: (corner: 'top-right' | 'bottom-right', position: [number, number, number]) => void;
   isGlobalDragging?: boolean;
+  isDroppedNote?: boolean;
+  rotation?: [number, number, number];
+  thickness?: number;
+  isCursorNoteActive?: boolean;
 }
 
 const StickyNote: React.FC<StickyNoteProps> = ({ 
@@ -20,18 +25,27 @@ const StickyNote: React.FC<StickyNoteProps> = ({
   onDragEnd,
   onHoverStart,
   onHoverEnd,
-  isGlobalDragging = false
+  onCornerClick,
+  isGlobalDragging = false,
+  isDroppedNote = false,
+  rotation = [0, 0, 0],
+  thickness,
+  isCursorNoteActive = false
 }) => {
+  // Use provided thickness or default based on whether it's a dropped note
+  const noteThickness = thickness ?? (isDroppedNote ? 0.002 : 0.1);
+  
   const [ref, api] = useBox<THREE.Mesh>(() => ({
-    mass: 1,
+    mass: isDroppedNote ? 0.1 : 1, // Lighter mass for dropped notes
     position,
-    args: [1, 1, 0.1],
+    rotation,
+    args: [1, 1, noteThickness],
     material: { 
-      friction: 0.3,
-      restitution: 0.2
+      friction: isDroppedNote ? 0.5 : 0.3, // More friction for dropped notes
+      restitution: isDroppedNote ? 0.1 : 0.2 // Less bounce for dropped notes
     },
-    linearDamping: 0.95,
-    angularDamping: 0.95,
+    linearDamping: isDroppedNote ? 0.99 : 0.95, // More damping for dropped notes
+    angularDamping: isDroppedNote ? 0.99 : 0.95,
   }));
 
   const [isDragging, setIsDragging] = useState(false);
@@ -204,132 +218,155 @@ const StickyNote: React.FC<StickyNoteProps> = ({
     setIsLeftCornerHovered(false);
   };
 
+  const handleCornerClick = (e: ThreeEvent<MouseEvent>, corner: 'top-right' | 'bottom-right') => {
+    e.stopPropagation();
+    const worldPosition = new THREE.Vector3();
+    (ref.current as THREE.Mesh).getWorldPosition(worldPosition);
+    onCornerClick?.(corner, [worldPosition.x, worldPosition.y, worldPosition.z]);
+  };
+
   return (
     <mesh
       ref={ref}
       castShadow
       receiveShadow
+      onPointerDown={!isDroppedNote ? handlePointerDown : undefined}
+      onPointerUp={!isDroppedNote ? handlePointerUp : undefined}
+      onPointerEnter={!isDroppedNote ? handlePointerEnter : undefined}
+      onPointerLeave={!isDroppedNote ? handlePointerLeave : undefined}
     >
-      <boxGeometry args={[1, 1, 0.1]} />
+      <boxGeometry args={[1, 1, noteThickness]} />
       <meshStandardMaterial
         color={color}
-        roughness={0.4}
-        metalness={0.1}
-        emissive={isHovered || isDragging ? color : '#000000'}
-        emissiveIntensity={isHovered || isDragging ? 0.2 : 0}
+        roughness={isDroppedNote ? 0.6 : 0.4}
+        metalness={0.0}
+        emissive={!isDroppedNote && (isHovered || isDragging) ? color : '#000000'}
+        emissiveIntensity={!isDroppedNote && (isHovered || isDragging) ? 0.2 : 0}
+        side={THREE.DoubleSide}
       />
 
-      {/* Left corner hover detection area */}
-      <mesh 
-        position={[0.35, 0.35, 0]}
-        onPointerEnter={(e) => {
-          e.stopPropagation();
-          handleLeftCornerPointerEnter(e);
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerLeave={(e) => {
-          e.stopPropagation();
-          handleLeftCornerPointerLeave(e);
-          if (!isDragging) {
-            document.body.style.cursor = isHovered ? 'grab' : 'auto';
-          } else {
-            document.body.style.cursor = 'grabbing';
-          }
-        }}
-      >
-        <boxGeometry args={[0.4, 0.4, 0.15]} />
-        <meshBasicMaterial visible={false} transparent opacity={0} />
-      </mesh>
-
-      {/* Right corner hover detection area */}
-      <mesh 
-        position={[0.35, -0.35, 0]}
-        onPointerEnter={(e) => {
-          e.stopPropagation();
-          handleRightCornerPointerEnter(e);
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerLeave={(e) => {
-          e.stopPropagation();
-          handleRightCornerPointerLeave(e);
-          if (!isDragging) {
-            document.body.style.cursor = isHovered ? 'grab' : 'auto';
-          } else {
-            document.body.style.cursor = 'grabbing';
-          }
-        }}
-      >
-        <boxGeometry args={[0.4, 0.4, 0.15]} />
-        <meshBasicMaterial visible={false} transparent opacity={0} />
-      </mesh>
-
-      {/* Full note hover detection area */}
-      <mesh
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          if (!isRightCornerHovered && !isLeftCornerHovered && !isDragging) {
-            document.body.style.cursor = 'grab';
-          }
-        }}
-        onPointerOut={(e) => {
-          e.stopPropagation();
-          if (!isRightCornerHovered && !isLeftCornerHovered && !isDragging) {
-            document.body.style.cursor = 'auto';
-          }
-        }}
-      >
-        <boxGeometry args={[1, 1, 0.11]} />
-        <meshBasicMaterial visible={false} transparent opacity={0} />
-      </mesh>
-
-      {/* Right folded corner triangle */}
-      {isRightCornerHovered && (
-        <mesh position={[0.35, -0.35, -0.051]}>
-          <extrudeGeometry
-            args={[
-              new THREE.Shape([
-                new THREE.Vector2(0, 0),
-                new THREE.Vector2(0.15, 0),
-                new THREE.Vector2(0, -0.15),
-              ]),
-              {
-                depth: -0.015,
-                bevelEnabled: false
+      {/* Only show corner hover areas and full note hover detection for non-dropped notes and when no cursor note is active */}
+      {!isDroppedNote && !isCursorNoteActive && (
+        <>
+          {/* Left (top-right) corner hover detection area */}
+          <mesh 
+            position={[0.35, 0.35, 0]}
+            onPointerEnter={(e) => {
+              e.stopPropagation();
+              handleLeftCornerPointerEnter(e);
+              document.body.style.cursor = 'pointer';
+            }}
+            onPointerLeave={(e) => {
+              e.stopPropagation();
+              handleLeftCornerPointerLeave(e);
+              if (!isRightCornerHovered) {
+                document.body.style.cursor = isHovered ? 'grab' : 'auto';
               }
-            ]}
-          />
-          <meshBasicMaterial
-            color={color}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      )}
+            }}
+            onPointerMove={(e) => {
+              e.stopPropagation();
+              document.body.style.cursor = 'pointer';
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCornerClick(e, 'top-right');
+            }}
+          >
+            <boxGeometry args={[0.4, 0.4, 0.15]} />
+            <meshBasicMaterial visible={false} transparent opacity={0} />
+          </mesh>
 
-      {/* Top-right folded corner triangle */}
-      {isLeftCornerHovered && (
-        <mesh position={[0.35, 0.35, -0.051]}>
-          <extrudeGeometry
-            args={[
-              new THREE.Shape([
-                new THREE.Vector2(0, 0),
-                new THREE.Vector2(0.15, 0),
-                new THREE.Vector2(0, 0.15),
-              ]),
-              {
-                depth: -0.015,
-                bevelEnabled: false
+          {/* Right (bottom-right) corner hover detection area */}
+          <mesh 
+            position={[0.35, -0.35, 0]}
+            onPointerEnter={(e) => {
+              e.stopPropagation();
+              handleRightCornerPointerEnter(e);
+              document.body.style.cursor = 'pointer';
+            }}
+            onPointerLeave={(e) => {
+              e.stopPropagation();
+              handleRightCornerPointerLeave(e);
+              if (!isLeftCornerHovered) {
+                document.body.style.cursor = isHovered ? 'grab' : 'auto';
               }
-            ]}
-          />
-          <meshBasicMaterial
-            color={color}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
+            }}
+            onPointerMove={(e) => {
+              e.stopPropagation();
+              document.body.style.cursor = 'pointer';
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCornerClick(e, 'bottom-right');
+            }}
+          >
+            <boxGeometry args={[0.4, 0.4, 0.15]} />
+            <meshBasicMaterial visible={false} transparent opacity={0} />
+          </mesh>
+
+          {/* Full note hover detection area */}
+          <mesh
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+            onPointerEnter={handlePointerEnter}
+            onPointerLeave={handlePointerLeave}
+            onPointerMove={(e) => {
+              e.stopPropagation();
+              if (!isRightCornerHovered && !isLeftCornerHovered && !isDragging) {
+                document.body.style.cursor = 'grab';
+              }
+            }}
+          >
+            <boxGeometry args={[1, 1, noteThickness]} />
+            <meshBasicMaterial visible={false} transparent opacity={0} />
+          </mesh>
+
+          {/* Right folded corner triangle */}
+          {isRightCornerHovered && (
+            <mesh position={[0.35, -0.35, -0.051]}>
+              <extrudeGeometry
+                args={[
+                  new THREE.Shape([
+                    new THREE.Vector2(0, 0),
+                    new THREE.Vector2(0.15, 0),
+                    new THREE.Vector2(0, -0.15),
+                  ]),
+                  {
+                    depth: -0.015,
+                    bevelEnabled: false
+                  }
+                ]}
+              />
+              <meshBasicMaterial
+                color={color}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          )}
+
+          {/* Top-right folded corner triangle */}
+          {isLeftCornerHovered && (
+            <mesh position={[0.35, 0.35, -0.051]}>
+              <extrudeGeometry
+                args={[
+                  new THREE.Shape([
+                    new THREE.Vector2(0, 0),
+                    new THREE.Vector2(0.15, 0),
+                    new THREE.Vector2(0, 0.15),
+                  ]),
+                  {
+                    depth: -0.015,
+                    bevelEnabled: false
+                  }
+                ]}
+              />
+              <meshBasicMaterial
+                color={color}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          )}
+        </>
       )}
     </mesh>
   );
